@@ -1,18 +1,18 @@
-name: Build APK
+name: Build APK Android
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and extract Android project
+      - name: Find and extract ZIP
         shell: bash
         run: |
           set -e
@@ -29,34 +29,39 @@ jobs:
           echo "ZIP ditemukan:"
           echo "$ZIP_FILE"
 
-          rm -rf project
-          mkdir -p project
+          rm -rf "$GITHUB_WORKSPACE/project"
+          mkdir -p "$GITHUB_WORKSPACE/project"
 
-          echo "Mengekstrak project..."
-          unzip -q "$ZIP_FILE" -d project
+          unzip -q "$ZIP_FILE" -d "$GITHUB_WORKSPACE/project"
 
-          echo "Isi hasil ekstraksi:"
-          find project -maxdepth 2 -type f | head -50
+          echo ""
+          echo "Isi project:"
+          ls -la "$GITHUB_WORKSPACE/project"
 
-      - name: Find Android project root
+      - name: Find Android project
         shell: bash
         run: |
           set -e
 
-          PROJECT_ROOT=$(find "$GITHUB_WORKSPACE/project" \
-            -name "settings.gradle.kts" \
-            -o -name "settings.gradle" \
+          SETTINGS_FILE=$(find "$GITHUB_WORKSPACE/project" \
+            -type f \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
             | head -n 1)
 
-          if [ -z "$PROJECT_ROOT" ]; then
+          if [ -z "$SETTINGS_FILE" ]; then
             echo "ERROR: settings.gradle.kts tidak ditemukan."
             exit 1
           fi
 
-          PROJECT_ROOT=$(dirname "$PROJECT_ROOT")
+          PROJECT_ROOT=$(dirname "$SETTINGS_FILE")
 
-          echo "Android project ditemukan di:"
+          echo "Android project root:"
           echo "$PROJECT_ROOT"
+
+          if [ ! -f "$PROJECT_ROOT/gradlew" ]; then
+            echo "ERROR: gradlew tidak ditemukan."
+            exit 1
+          fi
 
           echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
 
@@ -65,15 +70,29 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK platform
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-36"
+          sdkmanager "build-tools;36.0.0"
+
+      - name: Accept Android SDK licenses
         shell: bash
         run: |
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "platforms;android-36-ext1"
+
+      - name: Prepare Gradle
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --version
 
       - name: Create debug keystore
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -90,22 +109,23 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Make Gradle executable
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          chmod +x gradlew
-
       - name: Build Debug APK
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
-          ./gradlew --no-daemon --stacktrace :app:assembleDebug
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :app:assembleDebug
 
-      - name: Find generated APK
+      - name: Show APK
         shell: bash
         run: |
-          echo "APK yang berhasil dibuat:"
-          find "$PROJECT_ROOT/app/build/outputs/apk" -type f -name "*.apk"
+          echo "APK yang dihasilkan:"
+          find "$PROJECT_ROOT/app/build/outputs/apk" \
+            -type f \
+            -name "*.apk" \
+            -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
