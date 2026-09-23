@@ -1,11 +1,11 @@
-name: Build APK Android
+name: Build APK
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build APK
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -17,12 +17,16 @@ jobs:
         run: |
           set -e
 
-          echo "Mencari file ZIP..."
+          echo "Mencari ZIP..."
 
-          ZIP_FILE=$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+          ZIP_FILE=$(find "$GITHUB_WORKSPACE" \
+            -maxdepth 1 \
+            -type f \
+            -iname "*.zip" \
+            | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: File ZIP tidak ditemukan."
+            echo "ERROR: ZIP tidak ditemukan."
             exit 1
           fi
 
@@ -32,34 +36,42 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/project"
           mkdir -p "$GITHUB_WORKSPACE/project"
 
-          unzip -q "$ZIP_FILE" -d "$GITHUB_WORKSPACE/project"
+          unzip -q "$ZIP_FILE" \
+            -d "$GITHUB_WORKSPACE/project"
 
-          echo ""
           echo "Isi project:"
-          ls -la "$GITHUB_WORKSPACE/project"
+          find "$GITHUB_WORKSPACE/project" \
+            -maxdepth 2 \
+            -type f | head -80
 
-      - name: Find Android project
+      - name: Find Android project root
         shell: bash
         run: |
           set -e
 
           SETTINGS_FILE=$(find "$GITHUB_WORKSPACE/project" \
             -type f \
-            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            \( \
+              -name "settings.gradle.kts" \
+              -o \
+              -name "settings.gradle" \
+            \) \
             | head -n 1)
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: settings.gradle.kts tidak ditemukan."
+            echo "ERROR: settings.gradle tidak ditemukan."
             exit 1
           fi
 
           PROJECT_ROOT=$(dirname "$SETTINGS_FILE")
 
-          echo "Android project root:"
+          echo "Android project:"
           echo "$PROJECT_ROOT"
 
-          if [ ! -f "$PROJECT_ROOT/gradlew" ]; then
-            echo "ERROR: gradlew tidak ditemukan."
+          if [ ! -d "$PROJECT_ROOT/app" ]; then
+            echo "ERROR: Folder app tidak ditemukan."
+            echo "Struktur project:"
+            find "$PROJECT_ROOT" -maxdepth 2 -type d
             exit 1
           fi
 
@@ -70,12 +82,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK 36
+      - name: Install Android SDK
         shell: bash
         run: |
           sdkmanager "platform-tools"
@@ -87,12 +103,24 @@ jobs:
         run: |
           yes | sdkmanager --licenses > /dev/null || true
 
-      - name: Prepare Gradle
+      - name: Check project
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
-          chmod +x gradlew
-          ./gradlew --version
+          echo "Project root:"
+          pwd
+
+          echo ""
+          echo "Isi project:"
+          ls -la
+
+          echo ""
+          echo "Isi folder app:"
+          ls -la app
+
+          echo ""
+          echo "Gradle version:"
+          gradle --version
 
       - name: Create debug keystore
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -109,20 +137,21 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Build Debug APK
+      - name: Build APK
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
-          ./gradlew \
+          gradle \
             --no-daemon \
             --stacktrace \
             :app:assembleDebug
 
-      - name: Show APK
+      - name: Find APK
         shell: bash
         run: |
-          echo "APK yang dihasilkan:"
-          find "$PROJECT_ROOT/app/build/outputs/apk" \
+          echo "Mencari APK..."
+
+          find "${{ env.PROJECT_ROOT }}/app/build/outputs" \
             -type f \
             -name "*.apk" \
             -print
